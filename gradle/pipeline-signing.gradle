@@ -1,0 +1,24 @@
+// Passed to gradlew with --init-script by app.py. Signs the `release` build type of every
+// Android application module with the upload key from PIPELINE_UPLOAD_* environment variables,
+// whatever signingConfig the app's own build.gradle declares (Expo templates default to debug).
+
+def storeFilePath = System.getenv('PIPELINE_UPLOAD_STORE_FILE')
+
+if (storeFilePath) {
+    allprojects { project ->
+        project.pluginManager.withPlugin('com.android.application') {
+            def components = project.extensions.getByName('androidComponents')
+            components.finalizeDsl(new Action<Object>() {
+                void execute(Object android) {
+                    def upload = android.signingConfigs.maybeCreate('pipelineUpload')
+                    upload.storeFile = new File(storeFilePath)
+                    upload.storePassword = System.getenv('PIPELINE_UPLOAD_STORE_PASSWORD')
+                    upload.keyAlias = System.getenv('PIPELINE_UPLOAD_KEY_ALIAS')
+                    upload.keyPassword = System.getenv('PIPELINE_UPLOAD_KEY_PASSWORD')
+                    android.buildTypes.getByName('release').signingConfig = upload
+                }
+            })
+            project.logger.quiet("[apps-pipeline] release builds of ${project.path} are signed with ${storeFilePath}")
+        }
+    }
+}

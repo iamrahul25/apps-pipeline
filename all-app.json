@@ -1,0 +1,102 @@
+{
+  "apps": {
+    "habit-app": {
+      "name": "HabitCare",
+      "path": "C:/all-projects/habit-app",
+      "project_dir": ".",
+      "npm_dir": ".",
+      "env": {
+        "store_file": "MYAPP_UPLOAD_STORE_FILE",
+        "key_alias": "MYAPP_UPLOAD_KEY_ALIAS",
+        "store_password": "MYAPP_UPLOAD_STORE_PASSWORD",
+        "key_password": "MYAPP_UPLOAD_KEY_PASSWORD",
+        "package_name": "MYAPP_PACKAGE_NAME"
+      },
+      "keystore_name": "habitcare-upload.keystore",
+      "required_app_env": [
+        "EXPO_PUBLIC_SUPABASE_URL",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY"
+      ],
+      "checks": [
+        "npx tsc --noEmit"
+      ]
+    },
+    "connect-the-dots": {
+      "name": "Connect the Dots",
+      "path": "C:/all-projects/connect-the-dots",
+      "project_dir": "apps/mobile",
+      "npm_dir": ".",
+      "env": {
+        "store_file": "CTD_UPLOAD_STORE_FILE",
+        "key_alias": "CTD_UPLOAD_KEY_ALIAS",
+        "store_password": "CTD_UPLOAD_STORE_PASSWORD",
+        "key_password": "CTD_UPLOAD_KEY_PASSWORD",
+        "package_name": "CTD_PACKAGE_NAME"
+      },
+      "keystore_name": "connect-the-dots-upload.keystore",
+      "required_app_env": [],
+      "checks": [
+        "npm run typecheck",
+        "npm test"
+      ]
+    },
+    "arrow-escape-app": {
+      "name": "Arrow Escape",
+      "path": "C:/all-projects/arrow-escape-app",
+      "project_dir": ".",
+      "npm_dir": ".",
+      "env": {
+        "store_file": "ARROW_ESCAPE_UPLOAD_STORE_FILE",
+        "key_alias": "ARROW_ESCAPE_UPLOAD_KEY_ALIAS",
+        "store_password": "ARROW_ESCAPE_UPLOAD_STORE_PASSWORD",
+        "key_password": "ARROW_ESCAPE_UPLOAD_KEY_PASSWORD",
+        "package_name": "ARROW_ESCAPE_PACKAGE_NAME"
+      },
+      "keystore_name": "arrow-escape-upload.keystore",
+      "required_app_env": [],
+      "checks": [
+        "npx tsc --noEmit"
+      ]
+    },
+    "AR-games": {
+      "name": "AR Games",
+      "path": "C:/all-projects/AR-games",
+      "project_dir": ".",
+      "npm_dir": ".",
+      "env": {
+        "store_file": "AR_GAMES_UPLOAD_STORE_FILE",
+        "key_alias": "AR_GAMES_UPLOAD_KEY_ALIAS",
+        "store_password": "AR_GAMES_UPLOAD_STORE_PASSWORD",
+        "key_password": "AR_GAMES_UPLOAD_KEY_PASSWORD",
+        "package_name": "AR_GAMES_PACKAGE_NAME"
+      },
+      "keystore_name": "ar-games-upload.keystore",
+      "required_app_env": [],
+      "checks": [
+        "npm run typecheck",
+        "npx jest --ci"
+      ]
+    },
+    "battleship": {
+      "name": "Battleship",
+      "path": "C:/all-projects/battleship",
+      "project_dir": "app",
+      "npm_dir": "app",
+      "env": {
+        "store_file": "BATTLESHIP_UPLOAD_STORE_FILE",
+        "key_alias": "BATTLESHIP_UPLOAD_KEY_ALIAS",
+        "store_password": "BATTLESHIP_UPLOAD_STORE_PASSWORD",
+        "key_password": "BATTLESHIP_UPLOAD_KEY_PASSWORD",
+        "package_name": "BATTLESHIP_PACKAGE_NAME"
+      },
+      "keystore_name": "battleship-upload.keystore",
+      "required_app_env": [
+        "EXPO_PUBLIC_SERVER_URL"
+      ],
+      "checks": [
+        "npm run typecheck",
+        "npx jest --ci"
+      ]
+    }
+  }
+}
