@@ -2,10 +2,18 @@
   "battleship": {
     "aab": {
       "package": "com.nightwise.battleship",
-      "version": "1.0.3",
-      "versionCode": 4,
-      "built_at": "2026-10-25T17:20:20",
+      "version": "1.0.4",
+      "versionCode": 5,
+      "built_at": "2026-10-25T23:24:05",
       "sha256": "81:CB:B8:B2:46:17:FF:F9:C6:18:E2:FC:A5:B9:BF:BA:2C:9D:EE:6A:CF:CE:33:73:31:FC:D1:DE:04:13:5A:99"
+    },
+    "play_upload": {
+      "package": "com.nightwise.battleship",
+      "versionCode": 5,
+      "track": "internal",
+      "status": "draft",
+      "file": "C:/all-projects/battleship/release/app-release.aab",
+      "uploaded_at": "2026-10-25T23:33:35"
     }
   },
   "arrow-escape-app": {

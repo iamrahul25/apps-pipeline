@@ -15,10 +15,20 @@ The upload works like this:
 
 1. It checks the service account key, the `.aab` file, the package name, and the upload-key signature.
 2. It asks you which track to use and for optional release notes.
-3. It uploads the `.aab` and creates a **draft** release on that track.
+3. It uploads the `.aab` and **publishes** it on that track (100% rollout). This is the same as
+   *Save and publish* in Play Console.
 
-Nothing goes live until you open Play Console and roll out the draft yourself. At the end, the script prints
-either `UPLOADED TO GOOGLE PLAY` or `UPLOAD FAILED while <step>`, along with the reason and, when it can, how to fix it.
+What happens after publishing depends on the track and the app:
+
+- `internal`: testers get the update within a few minutes.
+- Other tracks: the release is sent to Google for review and goes live once the review passes.
+- If **managed publishing** is on, or a previous update was rejected, Play won't send the release for review
+  automatically. Send it yourself from *Publishing overview* in Play Console.
+- If the app has never had a published release, Play only accepts drafts. The script saves a draft and tells you
+  to publish it in Play Console.
+
+At the end, the script prints either `UPLOADED TO GOOGLE PLAY`, with the status and the next step, or
+`UPLOAD FAILED while <step>`, with the reason and, when it can, how to fix it.
 
 You can start an upload in three ways:
 
@@ -84,8 +94,7 @@ with a **JSON key file**. You create it once, and it can upload every app in you
    access to all apps. Give it at least these permissions:
    - **View app information and download bulk reports (read-only)**
    - **Release apps to testing tracks**
-   - **Release to production, exclude devices, and use Play App Signing**. This is only needed if you upload to `production`.
-4. Click **Invite user**, then **Send invite**. Service accounts are accepted automatically.
+   - **Release to production, exclude devices, and use Play App Signing**. This is only needed if you upload to `production`.4. Click **Invite user**, then **Send invite**. Service accounts are accepted automatically.
 
 > New permissions can take **up to 24 hours** to start working. Until then, uploads fail with
 > "The caller does not have permission".

@@ -14,7 +14,7 @@ Usage:
     python app.py aab <app> [--bump | --no-bump] [--skip-checks] [--prebuild]
     python app.py verify <app> [apk|aab]            # check signature of the release file
     python app.py upload <app> [--track TRACK] [--notes TEXT]
-                                                    # upload <PREFIX>_AAB_PATH to Google Play as a draft
+                                                    # upload <PREFIX>_AAB_PATH to Google Play and publish
 
 Google Play uploads need a service account key, see README.md.
 """
@@ -1249,13 +1249,13 @@ def describe_play_error(err: Exception) -> str:
     return "\n".join([message, *(f"       ↳ {hint}" for hint in hints)])
 
 
-def record_upload(app: App, package: str, code: int, track: str, path: Path) -> None:
+def record_upload(app: App, package: str, code: int, track: str, status: str, path: Path) -> None:
     history = load_history()
     history.setdefault(app.id, {})["play_upload"] = {
         "package": package,
         "versionCode": code,
         "track": track,
-        "status": "draft",
+        "status": status,
         "file": posix(path),
         "uploaded_at": datetime.now().isoformat(timespec="seconds"),
     }
@@ -1263,22 +1263,21 @@ def record_upload(app: App, package: str, code: int, track: str, path: Path) -> 
 
 
 def upload_to_play(app: App, aab: Path | None = None, track: str | None = None, notes: str | None = None) -> None:
-    """Upload an .aab (default: <PREFIX>_AAB_PATH) as a draft release of an existing Play app."""
+    """Upload an .aab (default: <PREFIX>_AAB_PATH) and publish it on a track of an existing Play app."""
     progress = {"step": "checking the setup"}
     try:
-        result = _upload_to_play(app, aab, track, notes, progress)
+        result, next_step = _upload_to_play(app, aab, track, notes, progress)
     except (PipelineError, KeyboardInterrupt):
         print(f"\n{RULE}\n  ❌ UPLOAD FAILED while {progress['step']}\n{RULE}")
         raise
     print(f"\n{RULE}\n  ✅ UPLOADED TO GOOGLE PLAY\n{RULE}")
     for label, value in result.items():
         print(f"  {label:<12} {value}")
-    print("\n  Nothing is live yet. Roll it out in Play Console > Test and release > "
-          f"{PLAY_TRACKS.get(result['Track'], result['Track'])}.")
+    print(f"\n  {next_step}")
 
 
 def _upload_to_play(app: App, aab: Path | None, track: str | None, notes: str | None,
-                    progress: dict[str, str]) -> dict[str, str]:
+                    progress: dict[str, str]) -> tuple[dict[str, str], str]:
     try:
         from google.oauth2 import service_account
         from googleapiclient.discovery import build as discovery_build
@@ -1332,17 +1331,27 @@ def _upload_to_play(app: App, aab: Path | None, track: str | None, notes: str | 
         print("\r  ⬆️  100%")
         code = bundle["versionCode"]
 
-        progress["step"] = f"creating the draft release on the '{track}' track"
-        info(f"Creating a draft release of versionCode {code} on the '{track}' track")
-        release = {"versionCodes": [str(code)], "status": "draft"}
+        progress["step"] = f"publishing the release on the '{track}' track"
+        info(f"Publishing versionCode {code} on the '{track}' track")
+        release = {"versionCodes": [str(code)], "status": "completed"}
         if notes:
             release["releaseNotes"] = [{"language": RELEASE_NOTES_LANGUAGE, "text": notes}]
-        edits.tracks().update(
+        update_track = lambda: edits.tracks().update(
             packageName=package, editId=edit_id, track=track, body={"track": track, "releases": [release]}
         ).execute(num_retries=3)
+        try:
+            update_track()
+        except HttpError as err:
+            # Apps that were never published on Play only accept draft releases.
+            if not re.search(r"status draft may be created on draft app", describe_play_error(err), re.I):
+                raise
+            print("⚠️  Play only accepts draft releases until this app's first release is published; saving as draft.")
+            release["status"] = "draft"
+            update_track()
 
         progress["step"] = "committing the edit"
         info("Committing the edit")
+        sent_for_review = True
         try:
             edits.commit(packageName=package, editId=edit_id).execute(num_retries=3)
         except HttpError as err:
@@ -1350,6 +1359,7 @@ def _upload_to_play(app: App, aab: Path | None, track: str | None, notes: str | 
             if "changesNotSentForReview" not in describe_play_error(err):
                 raise
             edits.commit(packageName=package, editId=edit_id, changesNotSentForReview=True).execute(num_retries=3)
+            sent_for_review = False
         edit_id = None
     except BaseException as err:
         if edit_id:
@@ -1361,16 +1371,28 @@ def _upload_to_play(app: App, aab: Path | None, track: str | None, notes: str | 
             raise PipelineError(describe_play_error(err)) from err
         raise
 
-    record_upload(app, package, code, track, aab)
-    return {
+    track_page = f"Play Console > Test and release > {PLAY_TRACKS.get(track, track)}"
+    if release["status"] == "draft":
+        next_step = f"Saved as a draft. Publish it in {track_page} > Edit release > Save and publish."
+    elif not sent_for_review:
+        next_step = ("Play did not send it for review automatically (managed publishing or a previous rejection). "
+                     "Open Play Console > Publishing overview and send the changes for review.")
+    elif track == "internal":
+        next_step = "Published. Internal testers get it within a few minutes."
+    else:
+        next_step = "Published and sent to Google for review. It goes live once the review passes."
+
+    record_upload(app, package, code, track, release["status"], aab)
+    result = {
         "App": app.name,
         "Package": package,
         "versionCode": str(code),
         "Track": track,
-        "Status": "draft",
+        "Status": release["status"],
         "File": posix(aab),
         "Time": f"{time.time() - started:.0f} s",
     }
+    return result, next_step
 
 
 # ---------------------------------------------------------------- CLI / menu
@@ -1396,7 +1418,7 @@ MENU = {
     "8": ("🔏 Verify signature of release/app-release.apk", lambda app, apps: verify_release(app, "apk")),
     "9": ("📂 Open release folder", lambda app, apps: open_release_folder(app)),
     "10": ("🔄 Regenerate android/ (expo prebuild, fixes stale android/)", lambda app, apps: prebuild_android(app)),
-    "11": ("☁️  Upload .aab to Google Play Console (<PREFIX>_AAB_PATH, draft)", lambda app, apps: upload_to_play(app)),
+    "11": ("☁️  Upload .aab to Google Play Console and publish (<PREFIX>_AAB_PATH)", lambda app, apps: upload_to_play(app)),
 }
 
 
@@ -1456,7 +1478,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     v.add_argument("app")
     v.add_argument("kind", nargs="?", choices=["aab", "apk"], default="aab")
 
-    u = sub.add_parser("upload", help="upload <PREFIX>_AAB_PATH to Google Play as a draft release")
+    u = sub.add_parser("upload", help="upload <PREFIX>_AAB_PATH to Google Play and publish it on a track")
     u.add_argument("app")
     u.add_argument("--track", help=f"{', '.join(PLAY_TRACKS)} or a custom closed track (asked if omitted)")
     u.add_argument("--notes", help=f"release notes ({RELEASE_NOTES_LANGUAGE}, max {MAX_RELEASE_NOTES} chars)")
