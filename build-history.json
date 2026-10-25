@@ -2,17 +2,18 @@
   "battleship": {
     "aab": {
       "package": "com.nightwise.battleship",
-      "version": "1.0.1",
-      "versionCode": 2,
-      "built_at": "2026-10-22T16:54:56",
+      "version": "1.0.3",
+      "versionCode": 4,
+      "built_at": "2026-10-25T17:20:20",
       "sha256": "81:CB:B8:B2:46:17:FF:F9:C6:18:E2:FC:A5:B9:BF:BA:2C:9D:EE:6A:CF:CE:33:73:31:FC:D1:DE:04:13:5A:99"
     }
   },
   "arrow-escape-app": {
     "aab": {
-      "version": "1.0.0",
-      "versionCode": 1,
-      "built_at": "2026-10-22T16:18:19",
+      "package": "com.nightwise.arrowescape",
+      "version": "1.0.2",
+      "versionCode": 3,
+      "built_at": "2026-10-22T23:08:26",
       "sha256": "65:EE:15:69:BE:87:F1:3C:F0:85:1E:E2:6D:53:9F:E9:4D:FA:7B:8D:94:FD:67:BA:56:97:33:46:1C:BC:14:E1"
     }
   }

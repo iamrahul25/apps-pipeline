@@ -10,7 +10,8 @@
         "key_alias": "MYAPP_UPLOAD_KEY_ALIAS",
         "store_password": "MYAPP_UPLOAD_STORE_PASSWORD",
         "key_password": "MYAPP_UPLOAD_KEY_PASSWORD",
-        "package_name": "MYAPP_PACKAGE_NAME"
+        "package_name": "MYAPP_PACKAGE_NAME",
+        "aab_path": "MYAPP_AAB_PATH"
       },
       "keystore_name": "habitcare-upload.keystore",
       "required_app_env": [
@@ -31,7 +32,8 @@
         "key_alias": "CTD_UPLOAD_KEY_ALIAS",
         "store_password": "CTD_UPLOAD_STORE_PASSWORD",
         "key_password": "CTD_UPLOAD_KEY_PASSWORD",
-        "package_name": "CTD_PACKAGE_NAME"
+        "package_name": "CTD_PACKAGE_NAME",
+        "aab_path": "CTD_AAB_PATH"
       },
       "keystore_name": "connect-the-dots-upload.keystore",
       "required_app_env": [],
@@ -50,7 +52,8 @@
         "key_alias": "ARROW_ESCAPE_UPLOAD_KEY_ALIAS",
         "store_password": "ARROW_ESCAPE_UPLOAD_STORE_PASSWORD",
         "key_password": "ARROW_ESCAPE_UPLOAD_KEY_PASSWORD",
-        "package_name": "ARROW_ESCAPE_PACKAGE_NAME"
+        "package_name": "ARROW_ESCAPE_PACKAGE_NAME",
+        "aab_path": "ARROW_ESCAPE_AAB_PATH"
       },
       "keystore_name": "arrow-escape-upload.keystore",
       "required_app_env": [],
@@ -68,7 +71,8 @@
         "key_alias": "AR_GAMES_UPLOAD_KEY_ALIAS",
         "store_password": "AR_GAMES_UPLOAD_STORE_PASSWORD",
         "key_password": "AR_GAMES_UPLOAD_KEY_PASSWORD",
-        "package_name": "AR_GAMES_PACKAGE_NAME"
+        "package_name": "AR_GAMES_PACKAGE_NAME",
+        "aab_path": "AR_GAMES_AAB_PATH"
       },
       "keystore_name": "ar-games-upload.keystore",
       "required_app_env": [],
@@ -87,7 +91,8 @@
         "key_alias": "BATTLESHIP_UPLOAD_KEY_ALIAS",
         "store_password": "BATTLESHIP_UPLOAD_STORE_PASSWORD",
         "key_password": "BATTLESHIP_UPLOAD_KEY_PASSWORD",
-        "package_name": "BATTLESHIP_PACKAGE_NAME"
+        "package_name": "BATTLESHIP_PACKAGE_NAME",
+        "aab_path": "BATTLESHIP_AAB_PATH"
       },
       "keystore_name": "battleship-upload.keystore",
       "required_app_env": [

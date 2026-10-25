@@ -13,6 +13,10 @@ Usage:
     python app.py apk <app> [--skip-checks] [--prebuild]
     python app.py aab <app> [--bump | --no-bump] [--skip-checks] [--prebuild]
     python app.py verify <app> [apk|aab]            # check signature of the release file
+    python app.py upload <app> [--track TRACK] [--notes TEXT]
+                                                    # upload <PREFIX>_AAB_PATH to Google Play as a draft
+
+Google Play uploads need a service account key, see README.md.
 """
 
 from __future__ import annotations
@@ -56,6 +60,33 @@ ARTIFACTS = {
     },
 }
 SIGNING_FIELDS = ("store_file", "key_alias", "store_password", "key_password")
+
+PLAY_CREDENTIALS_VAR = "PLAY_SERVICE_ACCOUNT_JSON"
+PLAY_SCOPE = "https://www.googleapis.com/auth/androidpublisher"
+PLAY_TRACKS = {
+    "internal": "Internal testing",
+    "alpha": "Closed testing",
+    "beta": "Open testing",
+    "production": "Production",
+}
+RELEASE_NOTES_LANGUAGE = "en-US"
+MAX_RELEASE_NOTES = 500
+UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024
+PLAY_ERROR_HINTS = [
+    (r"has not been used in project|API .* is disabled",
+     "Enable the Google Play Android Developer API in the service account's Cloud project (README step 2)."),
+    (r"does not have permission|insufficient permission|permission denied",
+     "Invite the service account in Play Console > Users and permissions with release permissions for this app "
+     "(README step 4). New permissions can take up to 24 hours to apply."),
+    (r"package not found|no application was found",
+     "Check <PREFIX>_PACKAGE_NAME. The app must already exist in the Play developer account the service account was invited to."),
+    (r"version code .*already been used",
+     "Play has already seen this versionCode. Build a new AAB (menu option 5 bumps the version)."),
+    (r"signed with the wrong key|not signed",
+     "The AAB must be signed with the upload key registered in Play Console > Test and release > App integrity."),
+    (r"invalid_grant|invalid jwt",
+     "The JSON key was deleted/revoked, or this PC's clock is wrong. Create a new key (README step 3)."),
+]
 
 
 class PipelineError(Exception):
@@ -167,6 +198,11 @@ def read_env_file(path: Path) -> dict[str, str]:
     return parse_env(path.read_text(encoding="utf-8")) if path.exists() else {}
 
 
+def env_var(name: str) -> str:
+    """Value from the central .env, falling back to the shell environment."""
+    return (read_env_file(ENV_FILE).get(name) or os.environ.get(name, "")).strip()
+
+
 def format_env_value(value: str) -> str:
     if not re.search(r"[\s#\"']", value):
         return value
@@ -217,7 +253,7 @@ def signing_for(app: App) -> Signing:
 def expected_package(app: App) -> str:
     """Package name the Play Console listing expects, from <PREFIX>_PACKAGE_NAME in .env."""
     var = app.env_names.get("package_name")
-    return (read_env_file(ENV_FILE).get(var) or os.environ.get(var, "")).strip() if var else ""
+    return env_var(var) if var else ""
 
 
 def ensure_env_example(app: App) -> None:
@@ -227,8 +263,9 @@ def ensure_env_example(app: App) -> None:
         app.env_names["store_password"]: "",
         app.env_names["key_password"]: "",
     }
-    if app.env_names.get("package_name"):
-        values[app.env_names["package_name"]] = ""
+    for optional in ("package_name", "aab_path"):
+        if app.env_names.get(optional):
+            values[app.env_names[optional]] = ""
     upsert_env_file(
         ENV_EXAMPLE_FILE,
         values,
@@ -579,7 +616,11 @@ def load_history() -> dict:
 
 
 def last_aab_code(app: App) -> int | None:
-    return load_history().get(app.id, {}).get("aab", {}).get("versionCode")
+    """Highest versionCode built or uploaded to Play so far."""
+    entry = load_history().get(app.id, {})
+    codes = [e.get("versionCode") for e in (entry.get("aab"), entry.get("play_upload")) if e]
+    codes = [code for code in codes if isinstance(code, int)]
+    return max(codes) if codes else None
 
 
 def record_build(app: App, kind: str, sha256: str, package: str | None) -> None:
@@ -1102,6 +1143,8 @@ def build(app: App, apps: dict[str, App], kind: str, bump_mode: bool | None = No
     size_mb = dest.stat().st_size / 1024**2
     minutes = (time.time() - started) / 60
     info(f"🎉 Built {dest.name} {version} (versionCode {code}) in {minutes:.1f} min -> {posix(dest)} ({size_mb:.1f} MB)")
+    if kind == "aab" and sys.stdin.isatty() and confirm("\n☁️  Upload it to Google Play Console now?"):
+        upload_to_play(app, dest)
 
 
 def prebuild_android(app: App) -> None:
@@ -1149,6 +1192,187 @@ def open_release_folder(app: App) -> None:
         subprocess.run(["open" if sys.platform == "darwin" else "xdg-open", str(app.release_dir)])
 
 
+# ---------------------------------------------------------------- Google Play upload
+
+
+def configured_aab(app: App) -> Path:
+    var = app.env_names.get("aab_path")
+    if not var:
+        raise PipelineError(f"No env.aab_path configured for {app.id} in {APPS_FILE.name}.")
+    value = env_var(var)
+    if not value:
+        raise PipelineError(f"{var} is not set in {posix(ENV_FILE)}. Set it to the .aab file to upload.")
+    path = Path(value)
+    if path.suffix.lower() != ".aab":
+        raise PipelineError(f"{var}={value} is not an .aab file.")
+    if not path.is_file():
+        raise PipelineError(f"{var} points to a missing file: {posix(path)}")
+    return path
+
+
+def play_service_account() -> tuple[Path, str]:
+    """The service account key file from .env and its client_email."""
+    value = env_var(PLAY_CREDENTIALS_VAR)
+    if not value:
+        raise PipelineError(f"{PLAY_CREDENTIALS_VAR} is not set in {posix(ENV_FILE)}. See README.md to create the key.")
+    path = Path(value)
+    if not path.is_file():
+        raise PipelineError(f"{PLAY_CREDENTIALS_VAR} points to a missing file: {posix(path)}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as err:
+        raise PipelineError(f"{posix(path)} is not a valid JSON key file: {err}")
+    if data.get("type") != "service_account" or not data.get("client_email"):
+        raise PipelineError(f'{posix(path)} is not a service account key (expected "type": "service_account").')
+    return path, data["client_email"]
+
+
+def ask_track() -> str:
+    labels = [f"{label} ({track})" for track, label in PLAY_TRACKS.items()]
+    choice = choose("Select Play track", labels)
+    if not choice:
+        raise PipelineError("Upload cancelled.")
+    return list(PLAY_TRACKS)[labels.index(choice)]
+
+
+def describe_play_error(err: Exception) -> str:
+    """Readable message for a Google API, auth or network error, plus a fix hint when known."""
+    message = f"{type(err).__name__}: {err}"
+    status = getattr(getattr(err, "resp", None), "status", None)
+    content = getattr(err, "content", None)
+    if status and content:
+        try:
+            message = f"HTTP {status}: {json.loads(content)['error']['message']}"
+        except (ValueError, KeyError, TypeError):
+            message = f"HTTP {status}: {content.decode('utf-8', 'replace')[:500]}"
+    hints = [hint for pattern, hint in PLAY_ERROR_HINTS if re.search(pattern, message, re.I)]
+    return "\n".join([message, *(f"       ↳ {hint}" for hint in hints)])
+
+
+def record_upload(app: App, package: str, code: int, track: str, path: Path) -> None:
+    history = load_history()
+    history.setdefault(app.id, {})["play_upload"] = {
+        "package": package,
+        "versionCode": code,
+        "track": track,
+        "status": "draft",
+        "file": posix(path),
+        "uploaded_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    HISTORY_FILE.write_text(json.dumps(history, indent=2) + "\n", encoding="utf-8")
+
+
+def upload_to_play(app: App, aab: Path | None = None, track: str | None = None, notes: str | None = None) -> None:
+    """Upload an .aab (default: <PREFIX>_AAB_PATH) as a draft release of an existing Play app."""
+    progress = {"step": "checking the setup"}
+    try:
+        result = _upload_to_play(app, aab, track, notes, progress)
+    except (PipelineError, KeyboardInterrupt):
+        print(f"\n{RULE}\n  ❌ UPLOAD FAILED while {progress['step']}\n{RULE}")
+        raise
+    print(f"\n{RULE}\n  ✅ UPLOADED TO GOOGLE PLAY\n{RULE}")
+    for label, value in result.items():
+        print(f"  {label:<12} {value}")
+    print("\n  Nothing is live yet. Roll it out in Play Console > Test and release > "
+          f"{PLAY_TRACKS.get(result['Track'], result['Track'])}.")
+
+
+def _upload_to_play(app: App, aab: Path | None, track: str | None, notes: str | None,
+                    progress: dict[str, str]) -> dict[str, str]:
+    try:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build as discovery_build
+        from googleapiclient.errors import HttpError
+        from googleapiclient.http import MediaFileUpload
+    except ImportError:
+        raise PipelineError(f"Google API libraries are not installed. Run: pip install -r {posix(ROOT / 'requirements.txt')}")
+
+    started = time.time()
+    info(f"{app.name}: upload .aab to Google Play Console")
+    key_file, client_email = play_service_account()
+    aab = aab or configured_aab(app)
+    print(f"AAB         {posix(aab)} ({aab.stat().st_size / 1024**2:.1f} MB)")
+    print(f"Account     {client_email}")
+    package = verify_package(app, aab)
+    if not package:
+        raise PipelineError(f"Could not read the package name from {aab.name}.")
+    signing = signing_for(app)
+    if signing.missing or not Path(signing.store_file).is_file():
+        print(f"⚠️  Signing values for {app.id} are incomplete in {ENV_FILE.name}; skipping the local upload-key check.")
+    else:
+        verify_artifact(app, aab, signing)
+
+    if not track:
+        if not sys.stdin.isatty():
+            raise PipelineError(f"No track given. Pass --track {'|'.join(PLAY_TRACKS)}.")
+        track = ask_track()
+    if notes is None and sys.stdin.isatty():
+        notes = input(f"Release notes ({RELEASE_NOTES_LANGUAGE}, Enter to skip): ").strip()
+    if notes and len(notes) > MAX_RELEASE_NOTES:
+        raise PipelineError(f"Release notes are {len(notes)} characters; Play allows {MAX_RELEASE_NOTES}.")
+
+    edits = edit_id = None
+    try:
+        progress["step"] = "signing in to Google Play"
+        info(f"Opening a Play Console edit for {package}")
+        credentials = service_account.Credentials.from_service_account_file(str(key_file), scopes=[PLAY_SCOPE])
+        edits = discovery_build("androidpublisher", "v3", credentials=credentials, cache_discovery=False).edits()
+        edit_id = edits.insert(packageName=package, body={}).execute(num_retries=3)["id"]
+
+        progress["step"] = "uploading the .aab"
+        info(f"Uploading {aab.name}")
+        media = MediaFileUpload(str(aab), mimetype="application/octet-stream",
+                                chunksize=UPLOAD_CHUNK_BYTES, resumable=True)
+        request = edits.bundles().upload(packageName=package, editId=edit_id, media_body=media)
+        bundle = None
+        while bundle is None:
+            status, bundle = request.next_chunk(num_retries=3)
+            if status:
+                print(f"\r  ⬆️  {status.progress():.0%}", end="", flush=True)
+        print("\r  ⬆️  100%")
+        code = bundle["versionCode"]
+
+        progress["step"] = f"creating the draft release on the '{track}' track"
+        info(f"Creating a draft release of versionCode {code} on the '{track}' track")
+        release = {"versionCodes": [str(code)], "status": "draft"}
+        if notes:
+            release["releaseNotes"] = [{"language": RELEASE_NOTES_LANGUAGE, "text": notes}]
+        edits.tracks().update(
+            packageName=package, editId=edit_id, track=track, body={"track": track, "releases": [release]}
+        ).execute(num_retries=3)
+
+        progress["step"] = "committing the edit"
+        info("Committing the edit")
+        try:
+            edits.commit(packageName=package, editId=edit_id).execute(num_retries=3)
+        except HttpError as err:
+            # Apps with managed publishing or a rejected update refuse automatic review submission.
+            if "changesNotSentForReview" not in describe_play_error(err):
+                raise
+            edits.commit(packageName=package, editId=edit_id, changesNotSentForReview=True).execute(num_retries=3)
+        edit_id = None
+    except BaseException as err:
+        if edit_id:
+            try:
+                edits.delete(packageName=package, editId=edit_id).execute()
+            except Exception:
+                pass
+        if isinstance(err, Exception):
+            raise PipelineError(describe_play_error(err)) from err
+        raise
+
+    record_upload(app, package, code, track, aab)
+    return {
+        "App": app.name,
+        "Package": package,
+        "versionCode": str(code),
+        "Track": track,
+        "Status": "draft",
+        "File": posix(aab),
+        "Time": f"{time.time() - started:.0f} s",
+    }
+
+
 # ---------------------------------------------------------------- CLI / menu
 
 
@@ -1172,6 +1396,7 @@ MENU = {
     "8": ("🔏 Verify signature of release/app-release.apk", lambda app, apps: verify_release(app, "apk")),
     "9": ("📂 Open release folder", lambda app, apps: open_release_folder(app)),
     "10": ("🔄 Regenerate android/ (expo prebuild, fixes stale android/)", lambda app, apps: prebuild_android(app)),
+    "11": ("☁️  Upload .aab to Google Play Console (<PREFIX>_AAB_PATH, draft)", lambda app, apps: upload_to_play(app)),
 }
 
 
@@ -1230,6 +1455,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     v = sub.add_parser("verify", help="check the signature of the release file")
     v.add_argument("app")
     v.add_argument("kind", nargs="?", choices=["aab", "apk"], default="aab")
+
+    u = sub.add_parser("upload", help="upload <PREFIX>_AAB_PATH to Google Play as a draft release")
+    u.add_argument("app")
+    u.add_argument("--track", help=f"{', '.join(PLAY_TRACKS)} or a custom closed track (asked if omitted)")
+    u.add_argument("--notes", help=f"release notes ({RELEASE_NOTES_LANGUAGE}, max {MAX_RELEASE_NOTES} chars)")
     return parser.parse_args(argv)
 
 
@@ -1256,6 +1486,8 @@ def main(argv: list[str]) -> int:
             prebuild_android(app)
         elif args.command == "verify":
             verify_release(app, args.kind)
+        elif args.command == "upload":
+            upload_to_play(app, track=args.track, notes=args.notes)
         else:
             build(app, apps, args.command, getattr(args, "bump", None), args.skip_checks, args.prebuild)
         return 0

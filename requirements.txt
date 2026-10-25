@@ -1,0 +1,3 @@
+# Only needed for Google Play uploads (menu option 11 / `python app.py upload <app>`).
+google-api-python-client>=2.100
+google-auth>=2.20
