@@ -72,6 +72,8 @@ PLAY_TRACKS = {
 RELEASE_NOTES_LANGUAGE = "en-US"
 MAX_RELEASE_NOTES = 500
 UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024
+# Play processes the whole bundle before answering the last chunk, which can take minutes.
+PLAY_HTTP_TIMEOUT_SECONDS = 300
 PLAY_ERROR_HINTS = [
     (r"has not been used in project|API .* is disabled",
      "Enable the Google Play Android Developer API in the service account's Cloud project (README step 2)."),
@@ -1201,7 +1203,10 @@ def configured_aab(app: App) -> Path:
         raise PipelineError(f"No env.aab_path configured for {app.id} in {APPS_FILE.name}.")
     value = env_var(var)
     if not value:
-        raise PipelineError(f"{var} is not set in {posix(ENV_FILE)}. Set it to the .aab file to upload.")
+        built = app.release_dir / "app-release.aab"
+        example = posix(built) if built.is_file() else "C:/path/to/app-release.aab"
+        raise PipelineError(f"{var} is not set in {posix(ENV_FILE)}, so there is no .aab to upload for {app.id}.\n"
+                            f"       ↳ Add this line to {ENV_FILE.name}: {var}={example}")
     path = Path(value)
     if path.suffix.lower() != ".aab":
         raise PipelineError(f"{var}={value} is not an .aab file.")
@@ -1231,7 +1236,7 @@ def ask_track() -> str:
     labels = [f"{label} ({track})" for track, label in PLAY_TRACKS.items()]
     choice = choose("Select Play track", labels)
     if not choice:
-        raise PipelineError("Upload cancelled.")
+        raise PipelineError("Upload cancelled: no Play track was selected (pressed Enter at the track prompt).")
     return list(PLAY_TRACKS)[labels.index(choice)]
 
 
@@ -1280,9 +1285,10 @@ def _upload_to_play(app: App, aab: Path | None, track: str | None, notes: str | 
                     progress: dict[str, str]) -> tuple[dict[str, str], str]:
     try:
         from google.oauth2 import service_account
+        from google_auth_httplib2 import AuthorizedHttp
         from googleapiclient.discovery import build as discovery_build
         from googleapiclient.errors import HttpError
-        from googleapiclient.http import MediaFileUpload
+        from googleapiclient.http import MediaFileUpload, build_http
     except ImportError:
         raise PipelineError(f"Google API libraries are not installed. Run: pip install -r {posix(ROOT / 'requirements.txt')}")
 
@@ -1302,6 +1308,7 @@ def _upload_to_play(app: App, aab: Path | None, track: str | None, notes: str | 
         verify_artifact(app, aab, signing)
 
     if not track:
+        progress["step"] = "choosing the Play track"
         if not sys.stdin.isatty():
             raise PipelineError(f"No track given. Pass --track {'|'.join(PLAY_TRACKS)}.")
         track = ask_track()
@@ -1315,7 +1322,11 @@ def _upload_to_play(app: App, aab: Path | None, track: str | None, notes: str | 
         progress["step"] = "signing in to Google Play"
         info(f"Opening a Play Console edit for {package}")
         credentials = service_account.Credentials.from_service_account_file(str(key_file), scopes=[PLAY_SCOPE])
-        edits = discovery_build("androidpublisher", "v3", credentials=credentials, cache_discovery=False).edits()
+        # build_http() stops httplib2 from treating the resumable upload's 308 replies as redirects.
+        base_http = build_http()
+        base_http.timeout = PLAY_HTTP_TIMEOUT_SECONDS
+        http = AuthorizedHttp(credentials, http=base_http)
+        edits = discovery_build("androidpublisher", "v3", http=http, cache_discovery=False).edits()
         edit_id = edits.insert(packageName=package, body={}).execute(num_retries=3)["id"]
 
         progress["step"] = "uploading the .aab"
@@ -1401,10 +1412,13 @@ def _upload_to_play(app: App, aab: Path | None, track: str | None, notes: str | 
 def choose(prompt: str, items: list[str]) -> str | None:
     for i, item in enumerate(items, 1):
         print(f"  {i}. {item}")
-    answer = input(f"{prompt} [1-{len(items)}, Enter to cancel]: ").strip()
-    if answer.isdigit() and 1 <= int(answer) <= len(items):
-        return items[int(answer) - 1]
-    return None
+    while True:
+        answer = input(f"{prompt} [1-{len(items)}, Enter to cancel]: ").strip()
+        if not answer:
+            return None
+        if answer.isdigit() and 1 <= int(answer) <= len(items):
+            return items[int(answer) - 1]
+        print(f"⚠️  '{answer}' is not a valid choice. Type a number from 1 to {len(items)}, or press Enter to cancel.")
 
 
 MENU = {

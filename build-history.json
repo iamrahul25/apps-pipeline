@@ -24,5 +24,31 @@
       "built_at": "2026-10-22T23:08:26",
       "sha256": "65:EE:15:69:BE:87:F1:3C:F0:85:1E:E2:6D:53:9F:E9:4D:FA:7B:8D:94:FD:67:BA:56:97:33:46:1C:BC:14:E1"
     }
+  },
+  "habit-app": {
+    "aab": {
+      "package": "com.rahulkumar.habitcare",
+      "version": "1.0.7",
+      "versionCode": 8,
+      "built_at": "2026-10-26T12:23:38",
+      "sha256": "69:2D:67:9A:FE:59:FA:0E:EB:C9:79:12:F7:A6:70:13:AA:52:68:AE:83:BD:9B:18:B4:D5:D3:52:D3:08:F7:10"
+    },
+    "play_upload": {
+      "package": "com.rahulkumar.habitcare",
+      "versionCode": 8,
+      "track": "internal",
+      "status": "completed",
+      "file": "C:/all-projects/habit-app/release/app-release.aab",
+      "uploaded_at": "2026-10-26T12:57:24"
+    }
+  },
+  "connect-the-dots": {
+    "aab": {
+      "package": "com.connectthedots.game",
+      "version": "1.0.4",
+      "versionCode": 5,
+      "built_at": "2026-10-29T00:52:03",
+      "sha256": "35:53:A1:5B:4C:20:4F:6F:C6:FA:D2:D8:A7:23:E2:39:13:42:83:4B:C4:FC:ED:43:D4:2F:2F:52:63:A4:6B:11"
+    }
   }
 }
