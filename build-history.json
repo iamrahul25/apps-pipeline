@@ -2,18 +2,18 @@
   "battleship": {
     "aab": {
       "package": "com.nightwise.battleship",
-      "version": "1.0.4",
-      "versionCode": 5,
-      "built_at": "2026-10-25T23:24:05",
+      "version": "1.0.5",
+      "versionCode": 6,
+      "built_at": "2026-10-30T23:36:53",
       "sha256": "81:CB:B8:B2:46:17:FF:F9:C6:18:E2:FC:A5:B9:BF:BA:2C:9D:EE:6A:CF:CE:33:73:31:FC:D1:DE:04:13:5A:99"
     },
     "play_upload": {
       "package": "com.nightwise.battleship",
-      "versionCode": 5,
+      "versionCode": 6,
       "track": "internal",
-      "status": "draft",
+      "status": "completed",
       "file": "C:/all-projects/battleship/release/app-release.aab",
-      "uploaded_at": "2026-10-25T23:33:35"
+      "uploaded_at": "2026-10-30T23:48:37"
     }
   },
   "arrow-escape-app": {
@@ -45,10 +45,27 @@
   "connect-the-dots": {
     "aab": {
       "package": "com.connectthedots.game",
-      "version": "1.0.4",
-      "versionCode": 5,
-      "built_at": "2026-10-29T00:52:03",
+      "version": "1.0.5",
+      "versionCode": 6,
+      "built_at": "2026-10-30T16:24:10",
       "sha256": "35:53:A1:5B:4C:20:4F:6F:C6:FA:D2:D8:A7:23:E2:39:13:42:83:4B:C4:FC:ED:43:D4:2F:2F:52:63:A4:6B:11"
+    },
+    "play_upload": {
+      "package": "com.connectthedots.game",
+      "versionCode": 6,
+      "track": "internal",
+      "status": "completed",
+      "file": "C:/all-projects/connect-the-dots/release/app-release.aab",
+      "uploaded_at": "2026-10-30T16:39:48"
+    }
+  },
+  "scroll-guard": {
+    "aab": {
+      "package": "com.nightwise.scrollguard",
+      "version": "1.0.0",
+      "versionCode": 1,
+      "built_at": "2026-11-01T16:03:17",
+      "sha256": "7D:CA:9D:BB:12:AF:22:DE:C6:6B:A0:95:F6:93:10:A0:2F:24:47:63:1E:7F:F9:C4:B2:36:01:9B:C9:DF:14:E4"
     }
   }
 }

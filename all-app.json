@@ -102,6 +102,26 @@
         "npm run typecheck",
         "npx jest --ci"
       ]
+    },
+    "scroll-guard": {
+      "name": "Scroll Guard",
+      "type": "native",
+      "path": "C:/all-projects/scroll-guard",
+      "project_dir": ".",
+      "npm_dir": ".",
+      "env": {
+        "store_file": "SCROLL_GUARD_UPLOAD_STORE_FILE",
+        "key_alias": "SCROLL_GUARD_UPLOAD_KEY_ALIAS",
+        "store_password": "SCROLL_GUARD_UPLOAD_STORE_PASSWORD",
+        "key_password": "SCROLL_GUARD_UPLOAD_KEY_PASSWORD",
+        "package_name": "SCROLL_GUARD_PACKAGE_NAME",
+        "aab_path": "SCROLL_GUARD_AAB_PATH"
+      },
+      "keystore_name": "scrollguard-release.keystore",
+      "required_app_env": [],
+      "checks": [
+        "gradlew testDebugUnitTest"
+      ]
     }
   }
 }

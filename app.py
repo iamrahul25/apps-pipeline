@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Release pipeline for the Expo Android apps listed in all-app.json.
+"""Release pipeline for the Android apps listed in all-app.json: Expo apps, and plain Gradle
+apps marked "type": "native" (gradlew at project_dir, version in app/build.gradle[.kts]).
 
 Signing keys come from the central .env next to this file (see .env.example). Release builds
 are written to <app repo>/release/app-release.apk or app-release.aab.
@@ -117,10 +118,12 @@ class App:
     keystore_name: str
     required_app_env: list[str] = field(default_factory=list)
     checks: list[str] = field(default_factory=list)
+    native: bool = False
 
     @property
     def android(self) -> Path:
-        return self.project / "android"
+        """Folder with gradlew: android/ for Expo apps, the project itself for native ones."""
+        return self.project if self.native else self.project / "android"
 
     @property
     def app_json(self) -> Path:
@@ -128,7 +131,9 @@ class App:
 
     @property
     def build_gradle(self) -> Path:
-        return self.android / "app" / "build.gradle"
+        gradle = self.android / "app" / "build.gradle"
+        kts = gradle.with_suffix(".gradle.kts")
+        return kts if self.native and kts.exists() else gradle
 
     @property
     def release_dir(self) -> Path:
@@ -150,6 +155,9 @@ def load_apps() -> dict[str, App]:
         missing += [f"env.{name}" for name in SIGNING_FIELDS if name not in cfg.get("env", {})]
         if missing:
             raise PipelineError(f"{APPS_FILE.name}: app '{app_id}' is missing {', '.join(missing)}")
+        app_type = cfg.get("type", "expo")
+        if app_type not in ("expo", "native"):
+            raise PipelineError(f"{APPS_FILE.name}: app '{app_id}' has unknown type '{app_type}' (expo or native)")
         root = Path(cfg["path"])
         apps[app_id] = App(
             id=app_id,
@@ -161,6 +169,7 @@ def load_apps() -> dict[str, App]:
             keystore_name=cfg.get("keystore_name", f"{app_id}-upload.keystore"),
             required_app_env=cfg.get("required_app_env", []),
             checks=cfg.get("checks", []),
+            native=app_type == "native",
         )
     if not apps:
         raise PipelineError(f"No apps defined in {APPS_FILE.name}.")
@@ -508,10 +517,9 @@ def verify_package(app: App, path: Path) -> str | None:
     expected = expected_package(app)
     print(f"Package     {path.name}: {actual or 'unknown'}   expected: {expected or 'not set in .env'}")
     if expected and actual and actual != expected:
-        raise PipelineError(
-            f"{path.name} has package {actual}, but Play Console expects {expected}. "
-            f"Fix android.package in the Expo config and run: python app.py prebuild {app.id}"
-        )
+        fix = (f"Fix applicationId in {posix(app.build_gradle)}." if app.native else
+               f"Fix android.package in the Expo config and run: python app.py prebuild {app.id}")
+        raise PipelineError(f"{path.name} has package {actual}, but Play Console expects {expected}. {fix}")
     if expected and not actual:
         raise PipelineError(f"Could not read the package name from {path.name}.")
     if expected:
@@ -541,13 +549,18 @@ def gradle_values(app: App) -> dict[str, str | None]:
     text = read_text(app.build_gradle) if app.build_gradle.exists() else ""
     get = lambda pattern: (m.group(1) if (m := re.search(pattern, text)) else None)
     return {
-        "applicationId": get(r"applicationId\s+['\"]([^'\"]+)['\"]"),
-        "versionCode": get(r"versionCode\s+(\d+)"),
-        "versionName": get(r"versionName\s+['\"]([^'\"]*)['\"]"),
+        "applicationId": get(r"applicationId\s*=?\s*['\"]([^'\"]+)['\"]"),
+        "versionCode": get(r"versionCode\s*=?\s*(\d+)"),
+        "versionName": get(r"versionName\s*=?\s*['\"]([^'\"]*)['\"]"),
     }
 
 
 def read_versions(app: App) -> tuple[str, int]:
+    if app.native:
+        if not app.build_gradle.exists():
+            raise OSError(f"{app.build_gradle} not found")
+        gradle = gradle_values(app)
+        return gradle["versionName"] or "1.0.0", int(gradle["versionCode"] or 1)
     expo = json.loads(read_text(app.app_json)).get("expo", {})
     code = expo.get("android", {}).get("versionCode") or gradle_values(app)["versionCode"] or 1
     return expo.get("version", "1.0.0"), int(code)
@@ -556,15 +569,15 @@ def read_versions(app: App) -> tuple[str, int]:
 def next_patch_version(version: str) -> str:
     match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version)
     if not match:
-        raise PipelineError(f"app.json version '{version}' is not in MAJOR.MINOR.PATCH format.")
+        raise PipelineError(f"Version '{version}' is not in MAJOR.MINOR.PATCH format.")
     major, minor, patch = (int(part) for part in match.groups())
     return f"{major}.{minor}.{patch + 1}"
 
 
 def sync_gradle_versions(app: App, version: str, code: int) -> None:
     gradle = read_text(app.build_gradle)
-    gradle, code_hits = re.subn(r"versionCode\s+\d+", f"versionCode {code}", gradle)
-    gradle, name_hits = re.subn(r"versionName\s+['\"][^'\"]*['\"]", f'versionName "{version}"', gradle)
+    gradle, code_hits = re.subn(r"(versionCode\s*=?\s*)\d+", rf"\g<1>{code}", gradle)
+    gradle, name_hits = re.subn(r"(versionName\s*=?\s*)['\"][^'\"]*['\"]", rf'\g<1>"{version}"', gradle)
     if not code_hits or not name_hits:
         raise PipelineError(f"Could not find versionCode/versionName in {app.build_gradle}")
     write_text(app.build_gradle, gradle)
@@ -572,15 +585,21 @@ def sync_gradle_versions(app: App, version: str, code: int) -> None:
 
 def bump_versions(app: App, last_code: int | None) -> dict[Path, str]:
     """Bump patch version and versionCode in app.json, package.json, package-lock.json and
-    android/app/build.gradle. Returns the original contents so a failed build can be undone."""
+    android/app/build.gradle (native apps: only app/build.gradle[.kts]).
+    Returns the original contents so a failed build can be undone."""
     package_json = app.project / "package.json"
     package_lock = app.project / "package-lock.json"
-    files = [app.app_json, package_json, package_lock, app.build_gradle]
+    files = [app.build_gradle] if app.native else [app.app_json, package_json, package_lock, app.build_gradle]
     originals = {path: read_text(path) for path in files if path.exists()}
 
     old_version, old_code = read_versions(app)
     new_version = next_patch_version(old_version)
     new_code = max(old_code, last_code or 0) + 1
+
+    if app.native:
+        sync_gradle_versions(app, new_version, new_code)
+        print(f"\n🔼 Version bumped: {old_version} -> {new_version}, versionCode {old_code} -> {new_code}")
+        return originals
 
     config = json.loads(originals[app.app_json])
     config["expo"]["version"] = new_version
@@ -699,6 +718,8 @@ def check_project(app: App, prebuild: bool, report: Report) -> str | None:
     if not app.project.is_dir():
         report.fail(f"Project folder not found: {app.project}", f"Fix 'project_dir' for {app.id} in {APPS_FILE.name}.")
         return None
+    if app.native:
+        return check_native_project(app, report)
 
     for path in {app.project / "package.json", app.npm_dir / "package.json"}:
         try:
@@ -765,6 +786,36 @@ def check_project(app: App, prebuild: bool, report: Report) -> str | None:
     return package
 
 
+def check_native_project(app: App, report: Report) -> str | None:
+    """Checks a plain Gradle project. Returns applicationId from app/build.gradle[.kts]."""
+    settings = [app.android / "settings.gradle", app.android / "settings.gradle.kts"]
+    missing = [posix(p.relative_to(app.project)) for p in (gradlew(app), app.build_gradle) if not p.exists()]
+    if not any(p.exists() for p in settings):
+        missing.append("settings.gradle[.kts]")
+    if missing:
+        report.fail(f"Gradle project incomplete, missing: {', '.join(missing)}")
+        return None
+    report.ok(f"Gradle project and wrapper ({posix(app.build_gradle.relative_to(app.project))})")
+
+    gradle = gradle_values(app)
+    version, code = gradle["versionName"], gradle["versionCode"]
+    if not code or version is None:
+        report.fail(f"versionCode/versionName not found in {app.build_gradle.name}")
+    elif re.fullmatch(r"\d+\.\d+\.\d+", version):
+        report.ok(f"versionName {version}, versionCode {code}")
+    else:
+        report.fail(f"versionName '{version}' is not MAJOR.MINOR.PATCH", f"Set it in {posix(app.build_gradle)}.")
+
+    package = gradle["applicationId"]
+    if not package:
+        report.fail(f"No applicationId set in {app.build_gradle.name}")
+    elif package.startswith(("com.anonymous.", "com.example.")):
+        report.fail(f"applicationId '{package}' is a placeholder", "Set a real package id before publishing.")
+    else:
+        report.ok(f"applicationId {package}")
+    return package
+
+
 def check_package_name(app: App, kind: str, config_package: str | None, prebuild: bool, report: Report) -> None:
     """Play Console rejects uploads whose package differs from the listing's, so pin it in .env."""
     report.section("📦 Package name")
@@ -780,6 +831,14 @@ def check_package_name(app: App, kind: str, config_package: str | None, prebuild
         report.fail(f"{var}={expected} is not a valid Android package name")
         return
     report.ok(f"{var}={expected}")
+
+    if app.native:
+        if config_package and config_package != expected:
+            report.fail(f"{app.build_gradle.name} applicationId is {config_package}, but Play expects {expected}",
+                        f"Set applicationId to '{expected}' in {posix(app.build_gradle)}.")
+        elif config_package:
+            report.ok(f"applicationId matches ({config_package})")
+        return
 
     if config_package and config_package != expected:
         report.fail(
@@ -803,12 +862,13 @@ def check_package_name(app: App, kind: str, config_package: str | None, prebuild
 
 def check_toolchain(app: App, report: Report) -> None:
     report.section("⚙️  Toolchain")
-    for tool in ("node", "npm", "npx"):
-        if not shutil.which(tool):
-            report.fail(f"{tool} not found on PATH", "Install Node.js LTS.")
-    node = capture([shutil.which("node") or "node", "--version"])
-    if node and node.returncode == 0:
-        report.ok(f"Node.js {node.stdout.strip()}")
+    if not app.native:
+        for tool in ("node", "npm", "npx"):
+            if not shutil.which(tool):
+                report.fail(f"{tool} not found on PATH", "Install Node.js LTS.")
+        node = capture([shutil.which("node") or "node", "--version"])
+        if node and node.returncode == 0:
+            report.ok(f"Node.js {node.stdout.strip()}")
 
     java_home = os.environ.get("JAVA_HOME")
     java_exe = "java.exe" if IS_WINDOWS else "java"
@@ -884,7 +944,7 @@ def check_signing(app: App, apps: dict[str, App], report: Report) -> Signing | N
         return None
     report.ok(f"Keystore exists ({posix(store)})")
     resolved = store.resolve()
-    if resolved.is_relative_to(app.android.resolve()):
+    if not app.native and resolved.is_relative_to(app.android.resolve()):
         report.fail("Keystore is inside android/, which `expo prebuild --clean` deletes",
                     f"Move it to {posix(KEYS_DIR)} and update {app.env_names['store_file']}.")
     elif resolved.is_relative_to(app.root.resolve()):
@@ -979,7 +1039,7 @@ def preflight(app: App, apps: dict[str, App], kind: str, prebuild: bool = False,
     check_app_env(app, report)
     signing = check_signing(app, apps, report)
     check_git(app, report)
-    if kind == "aab" and app.app_json.exists():
+    if kind == "aab" and (app.build_gradle.exists() if app.native else app.app_json.exists()):
         check_version_plan(app, bump_mode, report)
 
     note = f" ({len(report.warnings)} warning(s))" if report.warnings else ""
@@ -1104,7 +1164,8 @@ def build(app: App, apps: dict[str, App], kind: str, bump_mode: bool | None = No
     if not signing:
         raise PipelineError("Preflight failed. Fix the issues above; nothing was built.")
 
-    run([which("npm"), "install", "--no-audit", "--no-fund"], cwd=app.npm_dir)
+    if not app.native:
+        run([which("npm"), "install", "--no-audit", "--no-fund"], cwd=app.npm_dir)
     if app.checks and not skip_checks:
         info("Code checks")
         for check in app.checks:
@@ -1112,18 +1173,19 @@ def build(app: App, apps: dict[str, App], kind: str, bump_mode: bool | None = No
 
     originals = bump_versions(app, last_aab_code(app)) if kind == "aab" and should_bump(app, bump_mode) else None
     try:
-        if prebuild or not app.build_gradle.exists():
+        if not app.native and (prebuild or not app.build_gradle.exists()):
             prebuild_android(app)
         version, code = read_versions(app)
-        sync_gradle_versions(app, version, code)
+        if not app.native:
+            sync_gradle_versions(app, version, code)
 
         output = app.android / artifact["output"]
         output.unlink(missing_ok=True)
         info(f"Building {artifact['file_name']} {version} (versionCode {code}) with Gradle")
+        # Gradle does not see JS changes in workspace packages; always rebuild the JS bundle.
+        js_bundle = [] if app.native else ["createBundleReleaseJsAndAssets", "--rerun"]
         run(
-            [str(gradlew(app)), "--init-script", str(SIGNING_INIT_SCRIPT),
-             # Gradle does not see JS changes in workspace packages; always rebuild the JS bundle.
-             "createBundleReleaseJsAndAssets", "--rerun", artifact["gradle_task"]],
+            [str(gradlew(app)), "--init-script", str(SIGNING_INIT_SCRIPT), *js_bundle, artifact["gradle_task"]],
             cwd=app.android,
             env=gradle_env(app, signing),
         )
@@ -1150,6 +1212,8 @@ def build(app: App, apps: dict[str, App], kind: str, bump_mode: bool | None = No
 
 
 def prebuild_android(app: App) -> None:
+    if app.native:
+        raise PipelineError(f"{app.name} is a native Gradle project; expo prebuild does not apply.")
     info(f"Regenerating {posix(app.android)} from the Expo config (expo prebuild)")
     run([which("npx"), "expo", "prebuild", "--platform", "android", "--no-install"], cwd=app.project)
 

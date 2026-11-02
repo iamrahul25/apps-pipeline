@@ -1,7 +1,9 @@
 # Apps pipeline
 
-`app.py` builds signed release `.apk` / `.aab` files for the Expo apps in `all-app.json`, and can upload
-an `.aab` to Google Play Console as a new version of an **existing** app.
+`app.py` builds signed release `.apk` / `.aab` files for the apps in `all-app.json`, and can upload
+an `.aab` to Google Play Console as a new version of an **existing** app. Most apps are Expo apps; plain
+Kotlin/Gradle apps (like `scroll-guard`) are marked `"type": "native"` and are built straight from their
+`gradlew`, with the version read from and bumped in `app/build.gradle.kts`.
 
 ```bash
 python app.py                     # interactive menu
